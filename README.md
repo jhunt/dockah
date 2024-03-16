@@ -40,13 +40,13 @@ run credentials through any identified token endpoints.
 It's straightforward:
 
 ```console
-$ cp dockah ~/bin/dockash
+$ cp dockah ~/bin/
 ```
 
 or, if you prefer to inflict this system-wide:
 
 ```console
-# cp dockah /usr/local/bin
+# cp dockah /usr/local/bin/
 ```
 
 The git repo should retain the executable bit on the permissions,
