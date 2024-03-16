@@ -60,6 +60,6 @@ enough for now. Feel free to PR changes that make this work in
 your setup.
 
 On that note, this is a _side project_ and likely won't merit a
-ton of attention unless something breaks that affects me
+ton of attention unless something breaks that affects me and my
 asymmetric setup.  Please don't take it personally if your issues
 go untriaged and your PRs go unreviewed.
