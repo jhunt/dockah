@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+import requests, base64, getopt, sys, os
+from urllib.request import parse_http_list, parse_keqv_list
+from urllib.parse   import quote_plus
+from pprint import pprint
+
+def b64(s):
+  return base64.standard_b64encode(bytes(s, 'utf-8')).decode('utf-8')
+
+def kv2qs(h):
+  return '?' + '&'.join([f'{k}={quote_plus(h[k])}' for k in h])
+
+def www_authz(s):
+  if s.startswith('Bearer '):
+    l = parse_keqv_list(parse_http_list(s[7:]))
+    realm = l['realm']
+    del l['realm']
+    return (realm, l)
+  return (None, None)
+
+def dump(r):
+  print(f'{r.status_code} {r.reason}')
+  for k in r.headers:
+    print(f'{k}: {r.headers[k]}')
+  print()
+  print(r.text)
+
+class Client:
+  def __init__(self, url, username, password):
+    self.url = url
+    self.auth = b64(f'{username}:{password}')
+
+  def request(self, method, url):
+    headers = {
+      'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
+    }
+    r1 = method(f'{self.url}{url}', headers=headers)
+
+    if r1.status_code == 401 and 'Www-Authenticate' in r1.headers:
+      (realm, params) = www_authz(r1.headers['Www-Authenticate'])
+      if realm is not None:
+        r2 = requests.get(realm + kv2qs(params), headers = {
+          'Authorization': 'Basic ' + self.auth
+        })
+
+        if r2.status_code == 200:
+          headers['Authorization'] = f'Bearer {r2.json()["token"]}'
+          return method(f'{self.url}{url}', headers=headers)
+
+    return r1
+
+  def catalog(self):
+    r = self.request(requests.get, '/v2/_catalog')
+    return (r.status_code, r.json())
+
+  def tags(self, image):
+    r = self.request(requests.get, f'/v2/{image}/tags/list')
+    return (r.status_code, r.json())
+
+  def manifests(self, image, ref):
+    r = self.request(requests.get, f'/v2/{image}/manifests/{ref}')
+    digest = None
+    if 'Docker-Content-Digest' in r.headers:
+      digest = r.headers['Docker-Content-Digest']
+    return (r.status_code, r.json(), digest)
+
+  def delete(self, image, digest):
+    r = self.request(requests.delete, f'/v2/{image}/manifests/{digest}')
+    return (r.status_code == 202, None)
+
+def pick(lst, opts, default=None):
+  found = default
+  for (opt,val) in lst:
+    if opt in opts:
+      found = val
+  return found
+
+options, args = getopt.gnu_getopt(sys.argv, 'h:u:p:',
+    ['host=', 'username=', 'password='])
+
+host = pick(options, ['-h', '--host'])
+username = pick(options, ['-u', '--username'], os.environ.get('DOCKER_USERNAME'))
+password = pick(options, ['-p', '--password'], os.environ.get('DOCKER_PASSWORD'))
+
+if host is None:
+  print(f'USAGE: {args[0]} -h host:port COMMAND [OPTIONS]', file=sys.stderr)
+  sys.exit(1)
+
+if not host.startswith('http://') and not host.startswith('https://'):
+  host = 'https://' + host
+
+cli = Client(host, username, password)
+
+def fail(response):
+  if response is not None:
+    pprint(response, stream=sys.stderr)
+  sys.exit(2)
+
+def say(response):
+  if response is not None:
+    pprint(response)
+  sys.exit(0)
+
+match args[1]:
+  case 'catalog' | 'cat':
+    (ok, response) = cli.catalog()
+    say(response) if ok == 200 else fail(response)
+
+  case 'tags':
+    (ok, response) = cli.tags(args[2])
+    say(response) if ok == 200 else fail(response)
+
+  case 'show' | 'manifest' | 'manifests':
+    (ok, response, _) = cli.manifests(args[2], args[3])
+    say(response) if ok == 200 else fail(response)
+
+  case 'rm' | 'remove':
+    (ok, _, digest) = cli.manifests(args[2], args[3])
+    if ok != 200:
+      fail(None)
+    (ok, response) = cli.delete(args[2], digest)
+    say(response) if ok in [200, 202] else fail(response)
+
+  case _:
+    print(f'unrecognized command {args[1]}.')
+    print(f'valid commands are: catalog, tags, manifests, and remove')
+    print(f'(with aliases cat=catalog, rm=remove, and show=manifests')
+    sys.exit(1)
+
+# vim:ft=python:ts=2:sts=2:sw=2:et
